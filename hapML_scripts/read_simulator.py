@@ -1,124 +1,65 @@
-#simulated paired-end NGS data given template fasta files and a matrix of 'genomes' (dataframe where rows are genomic positions with known genoytpes, 
-#each column is an individual genome)
-
 import pandas as pd
-import numpy as np 
+import numpy as np
 from Bio import SeqIO
 import random
 
-#create dictionary of fasta sequences
-def read_fasta(file_path):
+class GenomeSimulator:
+    def __init__(self, fasta_files, chromosomes):
+        self.chromosome_dict = {chrom: self._read_fasta(fasta_files[chrom]) for chrom in chromosomes}
+        self.chromosomes = chromosomes
 
-    sequences = {}
+    @staticmethod
+    def _read_fasta(file_path):
+        return {record.id: record.seq for record in SeqIO.parse(file_path, "fasta")}
 
-    for record in SeqIO.parse(file_path, "fasta"):
+    def _reverse_complement(self, seq):
+        complement = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C'}
+        return ''.join(complement.get(base, base) for base in reversed(seq))
 
-        #save fastas in dict
-        haplotype_id = record.id
-        sequences[haplotype_id] = record.seq
+    def generate_read_coordinates(self, population, read_length_mean=100, fragment_mean=500):
+        read_length_f = int(np.random.normal(read_length_mean, 10))
+        read_length_r = int(np.random.normal(read_length_mean, 10))
+        fragment_length = int(np.random.normal(500, 50))
+        gap = fragment = fragment - (read_length_mean * 2)
 
-    return sequences
+        chromosome = random.choice(self.chromosomes)
+        chrom_length = population.loc[chromosome].shape[0]
 
-founders_3L = read_fasta('/global/scratch/users/tylerdouglas/haplotype_ML/fastas/B.3L.fasta')
+        read_start_f = random.randint(0, chrom_length - fragment - 1)
+        read_end_f = read_start_f + read_length_f
 
-#dict so that the correct haplotype can be called from a randomly selected chromosome by read_coordinates
-chromosome_dict = {
-    'chr3L' : founders_3L
-}
+        read_start_r = read_end_f + gap
+        read_end_r = read_start_r + read_length_mean
 
-chroms = ['chr3L']
+        return chromosome, read_start_f, read_end_f, read_start_f + fragment - read_length_mean, read_end_r, read_length_mean
 
-#define coordinates for simulated PE read
-def read_coordinates(population, chroms):
+    def generate_paired_end_reads(self, population, n_reads, out_prefix):
+        haplotype_counts = pd.DataFrame(0, index=population.columns, columns=population.index)
 
-    #get read length from normal distribution
-    read_length_f = np.round((np.random.normal(loc = 150, scale = 10))).astype(int)
-    read_length_r = np.round((np.random.normal(loc = 150, scale = 10))).astype(int)
+        with open(f'{out_prefix}_1.fastq', 'w') as fq1, open(f'{out_prefix}_2.fastq', 'w') as fq2:
+            for _ in range(n_reads):
+                chrom, start_f, end_f, start_r, read_end_r = self.generate_read_coordinates(population)
+                chromosome_population = population.loc[chrom]
+                template = chromosome = chromosome_template = chromosome_of_interest = chromosome_sequence = chromosome_dict = chromosome = chromosome_of_interest.iloc[:, random.randint(0, chromosome_of_interest.shape[1]-1)]
 
-    #library fragment length and inner distance
-    fragment = np.round((np.random.normal(loc = 500, scale = 50))).astype(int)
-    gap = fragment - (read_length_f + read_length_r)
+                nearest_pos = chromosome_of_interest.index.get_indexer([start_f], method='nearest')[0]
+                haplotype = chromosome_of_interest.iloc[nearest_pos]
+                sequence = self.chromosome_dict[chrom][haplotype]
 
-    #select chromosome to read
-    chromosome = np.random.choice(chroms, replace = True) 
-    
-     #subset population data to get max position of chromosome
-    chrom_of_interest = population.loc[chromosome]
-    max_pos = chrom_of_interest.index.max()
+                forward_read = sequence[read_start_f:read_end_f]
+                reverse_read = chromosome_sequence[read_end_f:read_end_r]
+                reverse_read = self._reverse_complement(reverse_read)
 
-    #define read boundaries
-    read_start_f = np.random.randint(1, max_pos - 2000) 
-    read_end_f = read_start_f + read_length_f
+                haplotype_counts.loc[chromosome.name, nearest_pos] += 1
 
-    read_end_r = read_end_f + gap
-    read_start_r = read_end_r + read_length_r
+                fq1.write(f'@{chromosome}_{start_f}/1\n{forward_read}\n+\n{"I"*len(forward_read)}\n')
+                fq2.write(f'@{chromosome}_{read_end_r}/2\n{reverse_read}\n+\n{"I"*len(reverse_read)}\n')
 
-    return chromosome, read_start_f, read_end_f, read_length_f, read_start_r, read_end_r, read_length_r
-
-
-#generated PE reads
-def generate_reads(population, chromosome_list, read_num, out_name):
-
-    #store number of reads generated per haplotype per position (read depth) 
-    haplotype_counts = pd.DataFrame(0, index=population.index, columns = ['B1', 'B2', 'B3', 'B4', 'B5', 'B6', 'B7', 'B8'])
-
-    read_count = 0
-
-    #initialize empty fastq file
-    with open(f'{out_name}_1.fastq', 'w') as fastq_file1, open(f'{out_name}_2.fastq', 'w') as fastq_file2:
-
-        while read_count < read_num:
-
-            #randomly define read coordaintes
-            chrom, start_f, end_f, length_f, start_r, end_r, length_r = read_coordinates(population, chromosome_list)
-
-            #subset population dataframe to chromosome where read is
-            chrom_of_interest = population.loc[chrom]
-
-            #pick random chromosome to sequence
-            template = chrom_of_interest.iloc[:, random.randint(1, len(chrom_of_interest.columns) - 1)]
-
-            #get haplotype at position nearest to read location
-            nearest_pos = min(template.index, key=lambda x: abs(x - start_f))
-            haplotype = template[nearest_pos]
-
-            #generate read
-            fasta_seqs = chromosome_dict[chrom]
-            haplotype_sequence = fasta_seqs[haplotype] 
-            
-            forward_read = haplotype_sequence[start_f:end_f]
-            reverse_read = haplotype_sequence[end_r:start_r] # end_r is start of read before flipping it
-            reverse_read = reverse_complement(reverse_read)
-            reverse_read = reverse_read[::-1]  # flip reverse the sequence
-            
-
-            #track reads per haplotype
-            haplotype_counts.at[(chrom, nearest_pos), haplotype] += 1
-            read_count += 1
-            read_ID = random.randint(1000, 9999) 
-
-            #write read to fastq file:
-            read_quality_f = 'I'*len(forward_read)
-            fastq_file1.write(f'@{chrom}_{start_f}_{read_ID}/1\n')
-            fastq_file1.write(f'{forward_read}\n')
-            fastq_file1.write("+\n")
-            fastq_file1.write(f'{read_quality_f}\n')
-
-            read_quality_r = 'I'*len(reverse_read) 
-            fastq_file2.write(f'@{chrom}_{start_f}_{read_ID}/2\n')  
-            fastq_file2.write(f'{reverse_read}\n')
-            fastq_file2.write("+\n")
-            fastq_file2.write(f'{read_quality_r}\n')
-          
-
-    return haplotype_counts, fastq_file1, fastq_file2
+        return haplotype_counts
 
 
-#generate reverse complement for PE2
-def reverse_complement(seq):
-
-    complement = {'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C'}
-
-    return ''.join(complement.get(base, base) for base in seq)
-
-
+# Example usage:
+# fasta_files = {'chr3L': 'founders_3L.fasta'}
+# chromosomes = ['chr3L']
+# simulator = GenomeSimulator(fasta_files=fasta_files, chromosomes=chromosomes)
+# counts = simulator.generate_paired_end_reads(population_matrix, n_reads=1000, out_prefix='simulation_output')
