@@ -3,7 +3,7 @@ This workflow simulates genomic data, generates synthetic paired-end reads, and 
 
 1) Population Simulation: Start with founder genotypes, simulate random mating (with drift and recombination).
 2) NGS Read Simulation: Use founder FASTAs to generate paired-end reads, complete with random fragment lengths and errors.
-3) Mapping & SNP Calling (via external tools like BWA, SAMtools, BCFTools).
+3) Mapping & SNP Calling.
 4) Haplotype Frequency Estimation: Define genomic windows, match observed SNP frequencies to “true” haplotype frequencies, then train a LightGBM model to predict those frequencies.
 
 Files
